@@ -6,12 +6,11 @@ on:
   pull_request:
     branches: [ "main" ]
     
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
+permissions: write-all
+
 env:
-  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -38,19 +37,10 @@ jobs:
       - name: Linting
         run: cargo clippy -- -D warnings
 
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-    - uses: dtolnay/rust-toolchain@nightly
-    - uses: Swatinem/rust-cache@v2
-    - name: Build
-      run: cargo build --verbose
-
   test:
     name: Test
     runs-on: ubuntu-latest
+    needs: [fmt, clippy]
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@nightly
@@ -58,17 +48,28 @@ jobs:
       - name: Run tests
         run: cargo test
 
-  Deploy-Production:
+  build:
     runs-on: ubuntu-latest
+    name: Build and Push
+    needs: [test]
     steps:
-      - uses: actions/checkout@v2
+      - name: git-checkout
+        uses: actions/checkout@v2
+
+      - name: Build
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
-      - name: Install Vercel CLI
-        run: npm install --global vercel@latest
-      - name: Pull Vercel Environment Information
-        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
-      - name: Build Project Artifacts
-        run: cargo build --verbose && vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
-      - name: Deploy Project Artifacts to Vercel
-        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - uses: jetli/trunk-action@v0.4.0
+        run: |
+          cargo build --verbose
+          rustup target add wasm32-unknown-unknown
+          trunk build
+    
+      - name: Push
+        uses: s0/git-publish-subdir-action@develop
+        env:
+          REPO: self
+          BRANCH: build # The branch name where you want to push the assets
+          FOLDER: dist # The directory where your assets are generated
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHub will automatically add this - you don't need to bother getting a token
+          MESSAGE: "Build: ({sha}) {msg}" # The commit message
